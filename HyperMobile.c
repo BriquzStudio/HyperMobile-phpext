@@ -114,6 +114,7 @@ PHP_MINIT_FUNCTION(HyperMobile)
 	INIT_CLASS_ENTRY(hyperMobile,"HyperMobile",HyperMobile_functions);
 	HyperMobile_ce = zend_register_internal_class(&hyperMobile TSRMLS_CC);
 	zend_declare_property_null(HyperMobile_ce,ZEND_STRL("js_content"),ZEND_ACC_PRIVATE TSRMLS_CC);
+	zend_declare_property_bool(HyperMobile_ce,ZEND_STRL("error"),0,ZEND_ACC_PRIVATE TSRMLS_CC);
 	zend_declare_property_null(HyperMobile_ce,ZEND_STRL("err_msg"),ZEND_ACC_PRIVATE TSRMLS_CC);
 	zend_declare_property_null(HyperMobile_ce,ZEND_STRL("objc_content"),ZEND_ACC_PRIVATE TSRMLS_CC);
 	return SUCCESS;
@@ -160,7 +161,7 @@ PHP_MINFO_FUNCTION(HyperMobile)
 	php_info_print_table_row(2, "Current Working model", "converter");
 	php_info_print_table_row(2, "Working engine", "Hyper-lang");
 	php_info_print_table_row(2, "Working engine type", "javascript to objective-c");
-	php_info_print_table_row(2, "HyperMobile version", "0.1alpha");
+	php_info_print_table_row(2, "HyperMobile version", "0.0.1/alpha");
 	php_info_print_table_end();
 
 	/* Remove comments if you have entries in php.ini
@@ -216,7 +217,7 @@ PHP_METHOD(HyperMobile, __destruct) {
 
 /** {{{ 从字符串载入js代码 */
 PHP_METHOD(HyperMobile, loadjsfromstring) {
-	char *arg=NULL;
+	char *arg;
 	int arg_len;
 	zval *value,*self;
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &arg,&arg_len) == FAILURE){
@@ -224,8 +225,8 @@ PHP_METHOD(HyperMobile, loadjsfromstring) {
 	}
 	self=getThis();
 	MAKE_STD_ZVAL(value);
-	ZVAL_STRING(value,arg,0);
-	SEPARATE_ZVAL_TO_MAKE_IS_REF(&value);
+	ZVAL_STRING(value,arg,1);
+	// SEPARATE_ZVAL_TO_MAKE_IS_REF(&value);
 	zend_update_property(Z_OBJCE_P(self), self, ZEND_STRL("js_content"), value TSRMLS_CC);
 	RETURN_TRUE;
 }
@@ -234,13 +235,87 @@ PHP_METHOD(HyperMobile, loadjsfromstring) {
 
 /** {{{ 从文件载入js代码 */
 PHP_METHOD(HyperMobile, loadjsfromfile) {
-	RETURN_TRUE;
+	char *filename;
+	int filename_len;
+	char *contents;//,*err;
+	php_stream *stream;
+	int len;
+	zval *self,*value;
+		/* Parse arguments */
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &filename, &filename_len) == FAILURE) {
+		return;
+	}
+	self=getThis();
+
+	if (strlen(filename) != filename_len) {
+		RETURN_FALSE;
+	}
+
+	stream = php_stream_open_wrapper(filename, "rb",
+				ENFORCE_SAFE_MODE | REPORT_ERRORS,
+				NULL);
+	if (!stream) {
+		RETURN_FALSE;
+	}
+
+
+	if ((len = php_stream_copy_to_mem(stream, &contents, PHP_STREAM_COPY_ALL, 0)) > 0) {
+
+		if (PG(magic_quotes_runtime)) {
+			contents = php_addslashes(contents, len, &len, 1 TSRMLS_CC); /* 1 = free source string */
+		}
+		php_stream_close(stream);
+		//
+		MAKE_STD_ZVAL(value);
+		ZVAL_STRING(value,contents,0);
+		zend_update_property(Z_OBJCE_P(self),self,ZEND_STRL("js_content"),value TSRMLS_CC);
+		RETURN_TRUE;
+	} else if (len == 0) {
+		php_stream_close(stream);
+		MAKE_STD_ZVAL(value);
+		// err = ;
+		ZVAL_STRING(value,"file content is empty",0);
+		zend_update_property(Z_OBJCE_P(self),self,ZEND_STRL("err_msg"),value TSRMLS_CC);
+		zend_update_property_bool(Z_OBJCE_P(self),self,ZEND_STRL("error"),1 TSRMLS_CC);
+		RETURN_FALSE;
+	} else {
+		php_stream_close(stream);
+		MAKE_STD_ZVAL(value);
+		ZVAL_STRING(value,"unknown error",0);
+		zend_update_property(Z_OBJCE_P(self),self,ZEND_STRL("err_msg"),value TSRMLS_CC);
+		zend_update_property_bool(Z_OBJCE_P(self),self,ZEND_STRL("error"),1 TSRMLS_CC);
+		RETURN_FALSE;
+	}
+
+	
 }
 /* }}} */
 
 
 /** {{{ 转换代码 */
 PHP_METHOD(HyperMobile, convert) {
+	/* 此方法不需要传入参数，返回布尔值表名是否转换正确 */
+	zval *self,*jscontent,*result;
+	self = getThis();
+	jscontent= zend_read_property(Z_OBJCE_P(self),self,ZEND_STRL("js_content"),0 TSRMLS_CC);
+	// Z_STRVAL_P(jscontent) //此宏能把zval转换成字符
+
+
+
+
+
+
+	//
+	MAKE_STD_ZVAL(result);
+	ZVAL_STRING(result,Z_STRVAL_P(jscontent),0);
+	zend_update_property(Z_OBJCE_P(self),self,ZEND_STRL("objc_content"),result TSRMLS_CC);
+
+
+
+
+
+
+
 	RETURN_TRUE;
 }
 /* }}} */
@@ -248,7 +323,12 @@ PHP_METHOD(HyperMobile, convert) {
 
 /** {{{ 获取是否出错，返回布尔值 */
 PHP_METHOD(HyperMobile, getError) {
-	RETURN_FALSE;
+	/* 如果err_msg为空则返回false */
+	zval *self,*Error;
+	self = getThis();
+	Error=zend_read_property(Z_OBJCE_P(self),self,ZEND_STRL("error"),0 TSRMLS_CC);
+	RETURN_BOOL(Z_BVAL_P(Error));
+	//RETURN_FALSE;
 }
 /* }}} */
 
@@ -258,7 +338,8 @@ PHP_METHOD(HyperMobile, getErrorMsg) {
 	zval *self,*ErrorMsg;
 	self = getThis();
 	ErrorMsg=zend_read_property(Z_OBJCE_P(self),self,ZEND_STRL("err_msg"),0 TSRMLS_CC);
-	RETURN_STRING(Z_STRVAL_P(ErrorMsg),0);
+	RETURN_STRING(Z_STRVAL_P(ErrorMsg),1);
+	// RETURN_FALSE;
 }
 /* }}} */
 
@@ -268,7 +349,7 @@ PHP_METHOD(HyperMobile, getObjc) {
 	zval *self,*Objc;
 	self = getThis();
 	Objc=zend_read_property(Z_OBJCE_P(self),self,ZEND_STRL("objc_content"),0 TSRMLS_CC);
-	RETURN_STRING(Z_STRVAL_P(Objc),0);
+	RETURN_STRING(Z_STRVAL_P(Objc),1);
 }
 /* }}} */
 
